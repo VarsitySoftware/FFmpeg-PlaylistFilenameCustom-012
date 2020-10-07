@@ -27,7 +27,7 @@
 
 static const char *const slave_opt_open  = "[";
 static const char *const slave_opt_close = "]";
-static const char *const slave_opt_delim = ":]"; /* must have the close too */
+static const char *const slave_opt_delim = "@]"; /* must have the close too */
 
 int ff_tee_parse_slave_options(void *log, char *slave,
                                AVDictionary **options, char **filename)
