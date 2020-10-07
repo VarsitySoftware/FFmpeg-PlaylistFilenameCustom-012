@@ -84,7 +84,7 @@ static int tee_open(URLContext *h, const char *filename, int flags)
     TeeContext *c = h->priv_data;
     int ret, i;
 
-    av_strstart(filename, "tee:", &filename);
+    av_strstart(filename, "tee@", &filename);
 
     if (flags & AVIO_FLAG_READ)
         return AVERROR(ENOSYS);
