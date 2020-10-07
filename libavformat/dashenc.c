@@ -122,7 +122,9 @@ typedef struct OutputStream {
     const char *single_file_name;  /* file names selected for this particular stream */
     const char *init_seg_name;
     const char *media_seg_name;
-
+    const char *playlist_filename_prefix;
+    const char *playlist_filename_suffix;
+    
     char codec_str[100];
     int written_len;
     char filename[1024];
@@ -199,6 +201,8 @@ typedef struct DASHContext {
     AVRational min_playback_rate;
     AVRational max_playback_rate;
     int64_t update_period;
+    const char *playlist_filename_prefix;
+    const char *playlist_filename_suffix;
 } DASHContext;
 
 static struct codec_string {
@@ -574,8 +578,9 @@ static void write_hls_media_playlist(OutputStream *os, AVFormatContext *s,
         ret = ff_hls_write_file_entry(c->m3u8_out, 0, c->single_file,
                                 (double) seg->duration / timescale, 0,
                                 seg->range_length, seg->start_pos, NULL,
-                                c->single_file ? os->initfile : seg->file,
+                                c->single_file ? os->initfile : seg->file, c->playlist_filename_prefix, c->playlist_filename_suffix,
                                 &prog_date_time, 0, 0, 0);
+        
         if (ret < 0) {
             av_log(os->ctx, AV_LOG_WARNING, "ff_hls_write_file_entry get error\n");
         }
@@ -645,6 +650,10 @@ static void dash_free(AVFormatContext *s)
         av_freep(&os->single_file_name);
         av_freep(&os->init_seg_name);
         av_freep(&os->media_seg_name);
+        av_freep(&os->init_seg_name);        
+        av_freep(&os->media_seg_name);
+        av_freep(&os->playlist_filename_prefix);
+        av_freep(&os->playlist_filename_suffix);
     }
     av_freep(&c->streams);
 
@@ -671,7 +680,25 @@ static void output_segment_list(OutputStream *os, AVIOContext *out, AVFormatCont
         if (c->streaming && os->availability_time_offset && !final)
             avio_printf(out, "availabilityTimeComplete=\"false\" ");
 
-        avio_printf(out, "initialization=\"%s\" media=\"%s\" startNumber=\"%d\"", os->init_seg_name, os->media_seg_name, c->use_timeline ? start_number : 1);
+        //avio_printf(out, "initialization=\"%s\" media=\"%s\" startNumber=\"%d\"", os->init_seg_name, os->media_seg_name, c->use_timeline ? start_number : 1);
+        
+        if (os->playlist_filename_prefix && os->playlist_filename_suffix)
+        {
+            avio_printf(out, "initialization=\"%s%s%s\" media=\"%s%s%s\" startNumber=\"%d\"", os->playlist_filename_prefix, os->init_seg_name, os->playlist_filename_suffix, os->playlist_filename_prefix, os->media_seg_name, os->playlist_filename_suffix, c->use_timeline ? start_number : 1);
+        }
+        else if (os->playlist_filename_prefix)
+        {
+            avio_printf(out, "initialization=\"%s%s\" media=\"%s%s\" startNumber=\"%d\"", os->playlist_filename_prefix, os->init_seg_name, os->playlist_filename_prefix, os->media_seg_name, c->use_timeline ? start_number : 1);
+        }
+        else if (os->playlist_filename_suffix)
+        {
+            avio_printf(out, "initialization=\"%s%s\" media=\"%s%s\" startNumber=\"%d\"", os->init_seg_name, os->playlist_filename_suffix, os->media_seg_name, os->playlist_filename_suffix, c->use_timeline ? start_number : 1);
+        }
+        else
+        {
+            avio_printf(out, "initialization=\"%s\" media=\"%s\" startNumber=\"%d\"", os->init_seg_name, os->media_seg_name, c->use_timeline ? start_number : 1);
+        }
+        
         if (c->presentation_time_offset)
             avio_printf(out, " presentationTimeOffset=\"%"PRId64"\"", c->presentation_time_offset);
         avio_printf(out, ">\n");
@@ -1334,8 +1361,8 @@ static int write_manifest(AVFormatContext *s, int final)
             if (st->codecpar->codec_id != AV_CODEC_ID_HEVC) {
                 codec_str_ptr = codec_str;
             }
-            get_hls_playlist_name(playlist_file, sizeof(playlist_file), NULL, i);
-            ff_hls_write_stream_info(st, c->m3u8_out, stream_bitrate,
+            get_hls_playlist_name(playlist_file, sizeof(playlist_file), NULL, i);            
+            ff_hls_write_stream_info(st, c->m3u8_out, c->playlist_filename_prefix, c->playlist_filename_suffix, stream_bitrate,
                                      playlist_file, agroup,
                                      codec_str_ptr, NULL, NULL);
         }
@@ -1498,6 +1525,11 @@ static int dash_init(AVFormatContext *s)
         if (c->init_seg_name) {
             os->init_seg_name = av_strireplace(c->init_seg_name, "$ext$", os->extension_name);
             if (!os->init_seg_name)
+                return AVERROR(ENOMEM);
+        }
+        if (c->playlist_filename_suffix) {
+            os->playlist_filename_suffix = av_strireplace(c->playlist_filename_suffix, "$ext$", os->extension_name);
+            if (!os->playlist_filename_suffix)
                 return AVERROR(ENOMEM);
         }
         if (c->media_seg_name) {
@@ -2239,7 +2271,7 @@ static int dash_write_packet(AVFormatContext *s, AVPacket *pkt)
                                  os->media_seg_name, pkt->stream_index,
                                  os->segment_index, os->bit_rate, os->start_pts);
         snprintf(os->full_path, sizeof(os->full_path), "%s%s", c->dirname,
-                 os->filename);
+                 os->filename);        
         snprintf(os->temp_path, sizeof(os->temp_path),
                  use_rename ? "%s.tmp" : "%s", os->full_path);
         set_http_options(&opts, c);
@@ -2356,6 +2388,8 @@ static const AVOption options[] = {
     { "single_file_name", "DASH-templated name to be used for baseURL. Implies storing all segments in one file, accessed using byte ranges", OFFSET(single_file_name), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, E },
     { "init_seg_name", "DASH-templated name to used for the initialization segment", OFFSET(init_seg_name), AV_OPT_TYPE_STRING, {.str = "init-stream$RepresentationID$.$ext$"}, 0, 0, E },
     { "media_seg_name", "DASH-templated name to used for the media segments", OFFSET(media_seg_name), AV_OPT_TYPE_STRING, {.str = "chunk-stream$RepresentationID$-$Number%05d$.$ext$"}, 0, 0, E },
+    { "dash_playlist_filename_prefix", "DASH-templated name to used for the segment prefix", OFFSET(playlist_filename_prefix), AV_OPT_TYPE_STRING, {.str = ""}, 0, 0, E },
+    { "dash_playlist_filename_suffix", "DASH-templated name to used for the segment suffix", OFFSET(playlist_filename_suffix), AV_OPT_TYPE_STRING, {.str = ""}, 0, 0, E },    
     { "utc_timing_url", "URL of the page that will return the UTC timestamp in ISO format", OFFSET(utc_timing_url), AV_OPT_TYPE_STRING, { 0 }, 0, 0, E },
     { "method", "set the HTTP method", OFFSET(method), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E },
     { "http_user_agent", "override User-Agent field in HTTP header", OFFSET(user_agent), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E},
