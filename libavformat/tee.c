@@ -113,8 +113,8 @@ static int parse_slave_fifo_options(const char *use_fifo,
     }
 
     if (fifo_options)
-        ret = av_dict_parse_string(&tee_slave->fifo_options, fifo_options, "=", ":", 0);
-
+        ret = av_dict_parse_string(&tee_slave->fifo_options, fifo_options, "=", "@", 0);
+    
     return ret;
 }
 
@@ -209,7 +209,7 @@ static int open_slave(AVFormatContext *avf, char *slave, TeeSlave *tee_slave)
 
         if (options) {
             char *format_options_str = NULL;
-            ret = av_dict_get_string(options, &format_options_str, '=', ':');
+            ret = av_dict_get_string(options, &format_options_str, '=', '@');
             if (ret < 0)
                 goto end;
 
