@@ -67,7 +67,7 @@ void ff_hls_write_subtitle_rendition(AVIOContext *out, const char *sgroup,
 }
 
 void ff_hls_write_stream_info(AVStream *st, AVIOContext *out, int bandwidth,
-                              const char *filename, const char *agroup,
+                              const char *filename, const char *filename_prefix, const char *filename_suffix, const char *agroup,
                               const char *codecs, const char *ccgroup,
                               const char *sgroup)
 {
@@ -91,8 +91,28 @@ void ff_hls_write_stream_info(AVStream *st, AVIOContext *out, int bandwidth,
     if (ccgroup && ccgroup[0])
         avio_printf(out, ",CLOSED-CAPTIONS=\"%s\"", ccgroup);
     if (sgroup && sgroup[0])
-        avio_printf(out, ",SUBTITLES=\"%s\"", sgroup);
-    avio_printf(out, "\n%s\n\n", filename);
+        avio_printf(out, ",SUBTITLES=\"%s\"", sgroup);    
+    if (filename_prefix && filename_suffix)
+    {
+        avio_printf(out, "\n%s", filename_prefix);
+        avio_printf(out, "%s", filename);
+        avio_printf(out, "%s\n\n", filename_suffix);
+    }
+    else if (filename_prefix)
+    {
+        avio_printf(out, "\n%s", filename_prefix);
+        avio_printf(out, "%s\n\n", filename);        
+    }
+    else if (filename_suffix)
+    {
+        avio_printf(out, "\n%s", filename);
+        avio_printf(out, "%s\n\n", filename_suffix);
+    }
+    else
+    {
+        avio_printf(out, "\n%s\n\n", filename);
+    }
+    
 }
 
 void ff_hls_write_playlist_header(AVIOContext *out, int version, int allowcache,
@@ -134,7 +154,7 @@ int ff_hls_write_file_entry(AVIOContext *out, int insert_discont,
                             int round_duration, int64_t size,
                             int64_t pos /* Used only if HLS_SINGLE_FILE flag is set */,
                             const char *baseurl /* Ignored if NULL */,
-                            const char *filename, double *prog_date_time,
+                            const char *filename, const char *filename_prefix, const char *filename_suffix, double *prog_date_time,
                             int64_t video_keyframe_size, int64_t video_keyframe_pos,
                             int iframe_mode)
 {
@@ -179,9 +199,32 @@ int ff_hls_write_file_entry(AVIOContext *out, int insert_discont,
         avio_printf(out, "#EXT-X-PROGRAM-DATE-TIME:%s.%03d%s\n", buf0, milli, buf1);
         *prog_date_time += duration;
     }
+        
     if (baseurl)
+    {
         avio_printf(out, "%s", baseurl);
-    avio_printf(out, "%s\n", filename);
+    }
+    if (filename_prefix && filename_suffix)
+    {
+        avio_printf(out, "%s", filename_prefix);
+        avio_printf(out, "%s", filename);
+        avio_printf(out, "%s\n", filename_suffix);
+    }
+    else if (filename_prefix)
+    {
+        avio_printf(out, "%s", filename_prefix);
+        avio_printf(out, "%s\n", filename);        
+    }
+    else if (filename_suffix)
+    {
+        avio_printf(out, "%s", filename);
+        avio_printf(out, "%s\n", filename_suffix);
+    }
+    else
+    {
+        avio_printf(out, "%s\n", filename);
+    }
+
 
     return 0;
 }
