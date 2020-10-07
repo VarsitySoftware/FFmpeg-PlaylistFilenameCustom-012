@@ -156,7 +156,9 @@ typedef struct VariantStream {
     char *vtt_basename;
     char *vtt_m3u8_name;
     char *m3u8_name;
-
+    char *basename_prefix;
+    char *basename_suffix;
+    
     double initial_prog_date_time;
     char current_segment_final_filename_fmt[MAX_URL_SIZE]; // when renaming segments
 
@@ -204,6 +206,8 @@ typedef struct HLSContext {
     uint32_t flags;        // enum HLSFlags
     uint32_t pl_type;      // enum PlaylistType
     char *segment_filename;
+    char *playlist_filename_prefix; // CUSTOMIZATION OPTION - ADDED BY JOHN WEAVER ON 7/30/2020
+    char *playlist_filename_suffix; // CUSTOMIZATION OPTION - ADDED BY JOHN WEAVER ON 7/30/2020
     char *fmp4_init_filename;
     int segment_type;
     int resend_init_file;  ///< resend init file into disk after refresh m3u8
@@ -1426,12 +1430,12 @@ static int create_master_playlist(AVFormatContext *s,
             ff_hls_write_subtitle_rendition(hls->m3u8_out, sgroup, vtt_m3u8_rel_name, vs->language, i, hls->has_default_key ? vs->is_default : 1);
         }
 
-        if (!hls->has_default_key || !hls->has_video_m3u8) {
-            ff_hls_write_stream_info(vid_st, hls->m3u8_out, bandwidth, m3u8_rel_name,
+        if (!hls->has_default_key || !hls->has_video_m3u8) {            
+            ff_hls_write_stream_info(vid_st, hls->m3u8_out, bandwidth, m3u8_rel_name, NULL, hls->playlist_filename_suffix,
                     aud_st ? vs->agroup : NULL, vs->codec_attr, ccgroup, sgroup);
         } else {
-            if (vid_st) {
-                ff_hls_write_stream_info(vid_st, hls->m3u8_out, bandwidth, m3u8_rel_name,
+            if (vid_st) {                
+                ff_hls_write_stream_info(vid_st, hls->m3u8_out, bandwidth, m3u8_rel_name, NULL, hls->playlist_filename_suffix,
                                          aud_st ? vs->agroup : NULL, vs->codec_attr, ccgroup, sgroup);
             }
         }
@@ -1526,7 +1530,7 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
         ret = ff_hls_write_file_entry(byterange_mode ? hls->m3u8_out : vs->out, en->discont, byterange_mode,
                                       en->duration, hls->flags & HLS_ROUND_DURATIONS,
                                       en->size, en->pos, hls->baseurl,
-                                      en->filename, prog_date_time_p, en->keyframe_size, en->keyframe_pos, hls->flags & HLS_I_FRAMES_ONLY);
+                                      en->filename, vs->basename_prefix, vs->basename_suffix, prog_date_time_p, en->keyframe_size, en->keyframe_pos, hls->flags & HLS_I_FRAMES_ONLY);
         if (ret < 0) {
             av_log(s, AV_LOG_WARNING, "ff_hls_write_file_entry get error\n");
         }
@@ -1546,8 +1550,8 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
                                      target_duration, sequence, PLAYLIST_TYPE_NONE, 0);
         for (en = vs->segments; en; en = en->next) {
             ret = ff_hls_write_file_entry(hls->sub_m3u8_out, 0, byterange_mode,
-                                          en->duration, 0, en->size, en->pos,
-                                          hls->baseurl, en->sub_filename, NULL, 0, 0, 0);
+                                          en->duration, 0, en->size, en->pos,                                          
+                                          hls->baseurl, en->sub_filename,  vs->basename_prefix, vs->basename_suffix, NULL, 0, 0, 0);
             if (ret < 0) {
                 av_log(s, AV_LOG_WARNING, "ff_hls_write_file_entry get error\n");
             }
@@ -1893,6 +1897,52 @@ fail:
     return ret;
 }
 
+static int format_name_nodir(const char *buf, char **s, int index, const char *varname)
+{
+    const char *proto, *dir;
+    char *orig_buf_dup = NULL, *mod_buf_dup = NULL;
+    int ret = 0;
+
+    orig_buf_dup = av_strdup(buf);
+    if (!orig_buf_dup)
+        return AVERROR(ENOMEM);
+
+    if (!av_stristr(buf, "%v")) {
+        *s = orig_buf_dup;
+        return 0;
+    }
+
+    if (!varname) {
+        if (replace_int_data_in_filename(s, orig_buf_dup, 'v', index) < 1) {
+            ret = AVERROR(EINVAL);
+            goto fail;
+        }
+    } else {
+        if (replace_str_data_in_filename(s, orig_buf_dup, 'v', varname) < 1) {
+            ret = AVERROR(EINVAL);
+            goto fail;
+        }
+    }
+
+    proto = avio_find_protocol_name(orig_buf_dup);
+    dir = av_dirname(orig_buf_dup);
+
+    /* if %v is present in the file's directory, create sub-directory */
+    if (av_stristr(dir, "%v") && proto && !strcmp(proto, "file")) {
+        mod_buf_dup = av_strdup(*s);
+        dir = av_dirname(mod_buf_dup);
+        //if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
+            //ret = AVERROR(errno);
+            //goto fail;
+        //}
+    }
+
+fail:
+    av_freep(&orig_buf_dup);
+    av_freep(&mod_buf_dup);
+    return ret;
+}
+            
 static int get_nth_codec_stream_index(AVFormatContext *s,
                                       enum AVMediaType codec_type,
                                       int64_t stream_id)
@@ -2887,6 +2937,22 @@ static int hls_init(AVFormatContext *s)
         if (!vs->oformat)
             return AVERROR_MUXER_NOT_FOUND;
 
+        if (hls->playlist_filename_prefix) {
+            ret = format_name_nodir(hls->playlist_filename_prefix, &vs->basename_prefix, i, vs->varname);
+            if (ret < 0)
+            {
+                return ret;
+            }
+        }
+        
+        if (hls->playlist_filename_suffix) {
+            ret = format_name_nodir(hls->playlist_filename_suffix, &vs->basename_suffix, i, vs->varname);
+            if (ret < 0)
+            {
+                return ret;
+            }
+        }
+        
         if (hls->segment_filename) {
             ret = format_name(hls->segment_filename, &vs->basename, i, vs->varname);
             if (ret < 0)
